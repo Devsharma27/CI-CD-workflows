@@ -8,7 +8,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v2
         with:
-          node-version: "12.16.1"
+          node-version: "14"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@master
@@ -18,11 +18,11 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: 'us-east-1'
       
-      - name: Deploy AWS infrastructure
-        run: npm cdk deploy
-      # - name: Install dependencies
-      #   run: npm
-      # - name: Synth stack
-      #   run: npm cdk synth
-      # - name: Deploy stack
-      #   run: npm cdk deploy --all --require-approval never
+      # - name: Deploy AWS infrastructure
+      #   run: npm cdk deploy
+      - name: Install dependencies
+        run: npm
+      - name: Synth stack
+        run: npm cdk synth
+      - name: Deploy stack
+        run: npm cdk deploy --all --require-approval never
