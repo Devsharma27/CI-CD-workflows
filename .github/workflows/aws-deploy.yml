@@ -4,10 +4,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
-      - uses: actions/setup-node@v2
+        uses: actions/checkout@v2
+      - name: Setup Node
+        uses: actions/setup-node@v2
         with:
-          node-version: "14"
+          node-version: "12.16.1"
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@master
         with:
@@ -15,9 +17,12 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: 'us-east-1'
-      - name: Install dependencies
-        run: npm
-      - name: Synth stack
-        run: npm cdk synth
-      - name: Deploy stack
-        run: npm cdk deploy --all --require-approval never
+      
+      - name: Deploy AWS infrastructure
+        run: cd infrastructure && npm run deploy
+      # - name: Install dependencies
+      #   run: npm
+      # - name: Synth stack
+      #   run: npm cdk synth
+      # - name: Deploy stack
+      #   run: npm cdk deploy --all --require-approval never
