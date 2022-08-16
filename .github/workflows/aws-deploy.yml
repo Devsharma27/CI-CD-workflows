@@ -19,7 +19,7 @@ jobs:
           aws-region: 'us-east-1'
       
       - name: Deploy AWS infrastructure
-        run: npm run deploy
+        run: npm cdk deploy
       # - name: Install dependencies
       #   run: npm
       # - name: Synth stack
