@@ -1,0 +1,170 @@
+name: Dev CI pipeline for strategies settlement
+
+env:
+  AWS_HOST: localstack
+  SERVICES: dynamodb,sqs,s3 # Add more services depending on your test case
+  NODE_ENV: test
+  STAGE: dev
+  ACCESS_KEY_ID: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+  SECRET_ACCESS_KEY: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+  NPM_READ_TOKEN: ${{ secrets.NPM_READ_TOKEN}}
+
+on:
+  push:
+    branches:
+      - feature-branch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: node:12.0.0-alpine
+    steps:
+      - uses: actions/checkout@v3
+      - uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+      - run: |
+          mkdir -p /github/workspace
+          cp -Rf . /github/workspace
+          cd /github/workspace    
+      - name: Cache node modules
+        id: cache-npm
+        uses: actions/cache@v3
+        env:
+          cache-name: cache-node-modules
+        with:
+          # npm cache files are stored in `~/.npm` on Linux/macOS
+          path: ~/.npm
+          key: ${{ runner.os }}-build-${{ env.cache-name }}
+      - if: ${{ steps.cache-npm.outputs.cache-hit == 'false' }}
+        name: List the state of node modules
+        continue-on-error: true
+        run: npm list
+      - name: Install Dependencies
+        run: |
+          echo "@org:registry=https://npm.pkg.github.com/" >> ~/.npmrc
+          echo "//npm.pkg.github.com/:_authToken=$NPM_READ_TOKEN" >> ~/.npmrc          
+          npm install
+      - name: Compress all files in workspace
+        run: |
+          tar -cvf workspace.tar .
+          ls -la
+          cp workspace.tar /github/workspace
+      - uses: actions/upload-artifact@master
+        with:
+          name: proj-workspace
+          path: /github/workspace/workspace.tar
+  test:
+    runs-on: ubuntu-latest
+    needs: [build]
+    container:
+      image: node:12.0.0-alpine
+    services:
+      localstack:
+        image: localstack/localstack
+        ports:
+          - 4566:4566 # Localstack exposes all services on same port
+        env:
+          SERVICES: ${{ env.SERVICES }}
+          DEBUG: ""
+          DATA_DIR: ""
+          LAMBDA_EXECUTOR: ""
+          KINESIS_ERROR_PROBABILITY: ""
+          DOCKER_HOST: unix:///var/run/docker.sock
+          HOST_TMP_FOLDER: "/tmp"
+          HOSTNAME_EXTERNAL: ${{ env.AWS_HOST }} # Required so that resource urls are provided properly
+                                                 # e.g sqs url will get localhost if we don't set this env to map our service
+        options: >-
+          --name=localstack
+          --health-cmd="curl -sS 127.0.0.1:4566 || exit 1"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+    steps:
+      - uses: actions/checkout@v3
+      - run: |
+          mkdir -p /github/workspace          
+      - uses: actions/download-artifact@master
+        with:
+          name: proj-workspace
+          path: /github/workspace
+      - run: |
+          ls -la /github/workspace    
+          cd ${GITHUB_WORKSPACE}
+          tar -xvf /github/workspace/workspace.tar     
+      - uses: actions/cache@v2
+        id: cache-npm
+        env:
+          cache-name: cache-node-modules
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-build-${{ env.cache-name }}
+      - run: npm ci
+      - name: run localPrerequisites
+        run: |
+          unset AWS_SECRET_ACCESS_KEY
+          unset AWS_ACCESS_KEY_ID
+          npm run db:init
+      - name: Run tests
+        run: |
+           npm run test-coverage
+      - name: SonarCloud Scan
+        uses: sonarsource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [test]
+    strategy:
+      matrix:
+        node-version: [12.x]
+    steps:
+      - uses: actions/checkout@v3
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+      - uses: actions/download-artifact@master
+        with:
+          name: proj-workspace
+          path: ~/workspace
+      - run: |
+          ls -la ~/workspace    
+          cd ${GITHUB_WORKSPACE}
+          tar -xvf ~/workspace/workspace.tar 
+      - uses: actions/cache@v2
+        id: cache-npm
+        env:
+          cache-name: cache-node-modules
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-build-${{ env.cache-name }}
+      - uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+      - name: Install Backend Dependencies
+        run: |
+          echo "@exporo:registry=https://npm.pkg.github.com/exporo" >> ~/.npmrc
+          echo "//npm.pkg.github.com/:_authToken=$EXPORO_NPM_READ_TOKEN" >> ~/.npmrc          
+          npm install
+      - name: Install Serverless
+        run: |       
+          npm install -g serverless@2
+        env:
+          EXPORO_NPM_READ_TOKEN: ${{ secrets.EXPORO_NPM_READ_TOKEN }}
+      - name: package Serverless
+        run: |       
+          serverless package --package settlement-artifacts --stage dev
+      - name: Serverless deploy
+        run: |
+          serverless deploy --package ./settlement-artifacts --stage dev
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+          AWS_SDK_LOAD_CONFIG: 0
+          SLS_DEBUG: '*'
